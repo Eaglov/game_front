@@ -22,7 +22,8 @@
     const BACKEND_URL = "https://party-game-backend-0grh.onrender.com"; // ЗАМЕНИ на свой
 
     // Подключение к бэкенду через socket.io
-    const socket = io(BACKEND_URL, { transports: ["websocket"] });
+    const socket = io(BACKEND_URL);
+    
 
     // Кнопка подключения к комнате
     document.getElementById('joinBtn').onclick = () => {
