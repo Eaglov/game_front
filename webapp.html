@@ -3,22 +3,41 @@
 <head>
   <meta charset="UTF-8">
   <title>Party Game</title>
+  <!-- Подключаем socket.io -->
   <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
 </head>
 <body>
   <h1>Party Game</h1>
+
+  <!-- Поля для ввода -->
   <input id="name" placeholder="Your name">
   <input id="room" placeholder="Room ID">
   <button id="joinBtn">Join Room</button>
+
+  <h3>Players in Room:</h3>
   <ul id="players"></ul>
 
   <script>
-    const socket = io();
+    // ⬇⬇⬇ ВСТАВЬ СВОЙ URL БЭКЕНДА С RENDER СЮДА
+    const BACKEND_URL = "https://party-game-backend-0grh.onrender.com"; // ЗАМЕНИ на свой
+
+    // Подключение к бэкенду через socket.io
+    const socket = io(BACKEND_URL, { transports: ["websocket"] });
+
+    // Кнопка подключения к комнате
     document.getElementById('joinBtn').onclick = () => {
       const name = document.getElementById('name').value;
       const room = document.getElementById('room').value;
+
+      if (!name || !room) {
+        alert("Введите имя и номер комнаты!");
+        return;
+      }
+
       socket.emit('joinRoom', { roomId: room, playerName: name });
     };
+
+    // Обновление списка игроков
     socket.on('updatePlayers', (players) => {
       const list = document.getElementById('players');
       list.innerHTML = '';
@@ -27,6 +46,14 @@
         li.textContent = p.name;
         list.appendChild(li);
       });
+    });
+
+    // Проверка соединения
+    socket.on("connect", () => {
+      console.log("✅ Подключено к бэкенду:", BACKEND_URL);
+    });
+    socket.on("connect_error", (err) => {
+      console.error("❌ Ошибка подключения:", err.message);
     });
   </script>
 </body>
