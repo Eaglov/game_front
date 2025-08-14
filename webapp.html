@@ -1,85 +1,318 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <meta charset="UTF-8">
-    <title>Party Game</title>
-    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; }
-        #game, #startBtn { display: none; }
-    </style>
+  <meta charset="UTF-8" />
+  <title>Party Game</title>
+  <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    .hidden { display: none; }
+    .answers { margin-top: 10px; }
+    .answer { padding: 8px; border: 1px solid #ddd; border-radius: 6px; margin-bottom: 6px; }
+    .btn { padding: 8px 12px; border: 1px solid #333; border-radius: 6px; cursor: pointer; background: #f7f7f7; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    ul { padding-left: 16px; }
+    .emoji { font-size: 18px; margin-left: 6px; cursor: pointer; }
+    .badge { background: #eee; padding: 4px 8px; border-radius: 12px; }
+    .panel { border: 1px solid #ccc; border-radius: 8px; padding: 12px; margin-top: 12px; }
+  </style>
 </head>
 <body>
-    <h1>Party Game</h1>
-    <div id="joinForm">
-        <input type="text" id="name" placeholder="Ваше имя">
-        <input type="text" id="room" placeholder="Номер комнаты">
-        <button id="joinBtn">Join Room</button>
+  <h1>Party Game</h1>
+
+  <!-- ФОРМА ВХОДА -->
+  <div id="join" class="panel">
+    <input id="name" placeholder="Ваше имя" />
+    <input id="room" placeholder="Номер комнаты" />
+    <button id="joinBtn" class="btn">Join Room</button>
+  </div>
+
+  <!-- ЛОББИ / ИГРА -->
+  <div id="game" class="panel hidden">
+    <div>
+      Комната: <span id="roomNumber" class="badge"></span>
+      &nbsp;|&nbsp; Раунд: <span id="roundNum" class="badge">-</span>
+      &nbsp;|&nbsp; <span id="phase" class="badge">Lobby</span>
     </div>
 
-    <div id="game">
-        <h2>Комната: <span id="roomNumber"></span></h2>
-        <h3>Игроки:</h3>
-        <ul id="playerList"></ul>
-        <button id="startBtn">Start Game</button>
+    <h3>Игроки</h3>
+    <ul id="players"></ul>
+
+    <button id="startBtn" class="btn hidden">Start Game</button>
+
+    <!-- Блок вопросов -->
+    <div id="questionBlock" class="panel hidden">
+      <h3>Вопрос</h3>
+      <div id="qText"></div>
+      <input id="answerInput" placeholder="Ваш ответ..." />
+      <button id="sendAnswer" class="btn">Отправить ответ</button>
+      <div id="qNote" style="margin-top:8px;color:#666;"></div>
     </div>
 
-    <script>
-        const socket = io("https://party-game-backend-0grh.onrender.com");
+    <!-- Блок голосования -->
+    <div id="voteBlock" class="panel hidden">
+      <h3>Голосование</h3>
+      <div id="voteQuestion"></div>
+      <div id="voteAnswers" class="answers"></div>
+      <div id="voteNote" style="margin-top:8px;color:#666;"></div>
+    </div>
 
-        let joined = false;
-        let myRoom = null;
-        let myName = null;
+    <!-- Результаты раунда -->
+    <div id="resultsBlock" class="panel hidden">
+      <h3>Результаты раунда</h3>
+      <div id="leaderboard"></div>
+      <button id="nextRoundBtn" class="btn hidden">Next Round</button>
+    </div>
+  </div>
 
-        document.getElementById('joinBtn').onclick = () => {
-            if (joined) return;
+  <script>
+    const BACKEND_URL = "https://party-game-backend-0grh.onrender.com";
+    const socket = io(BACKEND_URL, { transports: ['websocket', 'polling'] });
 
-            myName = document.getElementById('name').value.trim();
-            myRoom = document.getElementById('room').value.trim();
+    let myRoom = null;
+    let myName = null;
+    let myId = null; // присвоим при connect
+    let hostId = null;
 
-            if (!myName || !myRoom) {
-                alert("Введите имя и номер комнаты");
-                return;
-            }
+    // Текущие состояния вопрос/ответ
+    let currentPairIndex = null;
+    let currentQIndex = null;
 
-            joined = true;
-            socket.emit('joinRoom', { roomId: myRoom, playerName: myName });
+    // Кеш игроков (для отображения имен)
+    let playersCache = [];
+
+    socket.on('connect', () => { myId = socket.id; });
+
+    // ======= UI =======
+    const joinDiv = document.getElementById('join');
+    const gameDiv = document.getElementById('game');
+    const playersUl = document.getElementById('players');
+    const startBtn = document.getElementById('startBtn');
+
+    const questionBlock = document.getElementById('questionBlock');
+    const qText = document.getElementById('qText');
+    const answerInput = document.getElementById('answerInput');
+    const sendAnswerBtn = document.getElementById('sendAnswer');
+    const qNote = document.getElementById('qNote');
+
+    const voteBlock = document.getElementById('voteBlock');
+    const voteQuestion = document.getElementById('voteQuestion');
+    const voteAnswers = document.getElementById('voteAnswers');
+    const voteNote = document.getElementById('voteNote');
+
+    const resultsBlock = document.getElementById('resultsBlock');
+    const leaderboardDiv = document.getElementById('leaderboard');
+    const nextRoundBtn = document.getElementById('nextRoundBtn');
+
+    document.getElementById('joinBtn').onclick = () => {
+      myName = document.getElementById('name').value.trim();
+      myRoom = document.getElementById('room').value.trim();
+      if (!myName || !myRoom) {
+        alert("Введите имя и номер комнаты");
+        return;
+      }
+      socket.emit('joinRoom', { roomId: myRoom, playerName: myName });
+    };
+
+    document.getElementById('roomNumber').innerText = '-';
+
+    startBtn.onclick = () => socket.emit('startGame', myRoom);
+
+    // ======= HANDLERS =======
+    socket.on('roomJoined', ({ roomId, players, hostId: hId, round, state }) => {
+      myRoom = roomId;
+      hostId = hId;
+      playersCache = players;
+
+      joinDiv.classList.add('hidden');
+      gameDiv.classList.remove('hidden');
+
+      document.getElementById('roomNumber').innerText = myRoom;
+      document.getElementById('phase').innerText = state;
+      document.getElementById('roundNum').innerText = round || 0;
+
+      renderPlayers(players);
+      startBtn.classList.toggle('hidden', myId !== hostId);
+    });
+
+    socket.on('playerListUpdate', (players) => {
+      playersCache = players;
+      renderPlayers(players);
+    });
+
+    socket.on('hostChanged', (newHostId) => {
+      hostId = newHostId;
+      startBtn.classList.toggle('hidden', myId !== hostId);
+    });
+
+    socket.on('roundStarted', ({ round }) => {
+      document.getElementById('roundNum').innerText = round;
+      document.getElementById('phase').innerText = 'answering';
+      resultsBlock.classList.add('hidden');
+      leaderboardDiv.innerHTML = '';
+      voteBlock.classList.add('hidden');
+
+      // очистка предыдущего вопроса
+      questionBlock.classList.add('hidden');
+      qText.innerText = '';
+      answerInput.value = '';
+      qNote.innerText = '';
+      currentPairIndex = null;
+      currentQIndex = null;
+    });
+
+    // Показ вопроса только для участников пары
+    socket.on('showQuestion', ({ pairIndex, qIndex, question }) => {
+      currentPairIndex = pairIndex;
+      currentQIndex = qIndex;
+
+      questionBlock.classList.remove('hidden');
+      qText.innerText = question;
+      answerInput.value = '';
+      qNote.innerText = `Вы отвечаете как участник пары. Вопрос ${qIndex + 1} из 2.`;
+    });
+
+    sendAnswerBtn.onclick = () => {
+      const val = answerInput.value.trim();
+      if (!val) return;
+      if (currentPairIndex === null || currentQIndex === null) return;
+
+      socket.emit('submitAnswer', {
+        roomId: myRoom,
+        pairIndex: currentPairIndex,
+        qIndex: currentQIndex,
+        answer: val
+      });
+
+      // блокируем повторную отправку на этот вопрос
+      answerInput.disabled = true;
+      sendAnswerBtn.disabled = true;
+      qNote.innerText = 'Ответ отправлен. Ожидайте.';
+      setTimeout(() => {
+        answerInput.disabled = false;
+        sendAnswerBtn.disabled = false;
+      }, 1500);
+    };
+
+    // Фаза голосования
+    socket.on('votingPhaseStarted', () => {
+      document.getElementById('phase').innerText = 'voting';
+      questionBlock.classList.add('hidden');
+      voteBlock.classList.remove('hidden');
+      voteAnswers.innerHTML = '';
+      voteQuestion.innerText = 'Подождите, идёт подготовка…';
+      voteNote.innerText = '';
+    });
+
+    // Шаг голосования: пара+вопрос
+    socket.on('votingStep', ({ pairIndex, qIndex, question, answers, eligibleVoters }) => {
+      voteAnswers.innerHTML = '';
+      voteQuestion.innerText = `Вопрос: ${question}`;
+      const iAmEligible = eligibleVoters.includes(myId);
+
+      if (!iAmEligible) {
+        voteNote.innerText = 'Вы участник этой пары — голосовать нельзя.';
+      } else {
+        voteNote.innerText = 'Выберите лучший ответ и поставьте эмодзи (один голос).';
+      }
+
+      answers.forEach(a => {
+        const div = document.createElement('div');
+        div.className = 'answer';
+        div.innerHTML = `
+          <b>${a.playerName}</b>: ${a.answer}
+          <div style="margin-top:6px;">
+            <button class="btn voteBtn" data-target="${a.playerId}" data-emoji="😂">😂</button>
+            <button class="btn voteBtn" data-target="${a.playerId}" data-emoji="🙂">🙂</button>
+            <button class="btn voteBtn" data-target="${a.playerId}" data-emoji="💩">💩</button>
+          </div>
+        `;
+        voteAnswers.appendChild(div);
+      });
+
+      // клик по кнопке голосования
+      [...document.querySelectorAll('.voteBtn')].forEach(btn => {
+        btn.onclick = () => {
+          if (!eligibleVoters.includes(myId)) return; // защита на клиенте
+          const target = btn.getAttribute('data-target');
+          const emoji = btn.getAttribute('data-emoji');
+          // отправляем голос
+          socket.emit('submitVote', {
+            roomId: myRoom,
+            pairIndex,
+            qIndex,
+            targetPlayerId: target,
+            emoji
+          });
+          // запретим повторное нажатие
+          [...document.querySelectorAll('.voteBtn')].forEach(b => b.disabled = true);
+          voteNote.innerText = 'Голос учтён. Ожидаем других.';
         };
+      });
+    });
 
-        document.getElementById('startBtn').onclick = () => {
-            if (!myRoom) return;
-            socket.emit('startGame', myRoom);
-        };
+    // (необязательно) Промежуточный подсчёт
+    socket.on('votingStepTally', ({ pairIndex, qIndex, votes }) => {
+      // Можно что-то показать, если нужно
+      // console.log('Tally', pairIndex, qIndex, votes);
+    });
 
-        socket.on('roomJoined', (players) => {
-            document.getElementById('joinForm').style.display = 'none';
-            document.getElementById('game').style.display = 'block';
-            document.getElementById('roomNumber').innerText = myRoom;
-            updatePlayerList(players);
+    // Итоги раунда
+    socket.on('roundResults', ({ round, leaderboard, totalRounds }) => {
+      document.getElementById('phase').innerText = 'results';
+      voteBlock.classList.add('hidden');
+      resultsBlock.classList.remove('hidden');
 
-            // Только первый игрок в списке — "хост", ему показываем кнопку
-            if (players[0].name === myName) {
-                document.getElementById('startBtn').style.display = 'inline-block';
-            }
-        });
+      let html = `<table border="1" cellpadding="6" cellspacing="0">
+        <tr><th>#</th><th>Игрок</th><th>😂</th><th>🙂</th><th>💩</th></tr>`;
+      leaderboard.forEach((row, idx) => {
+        html += `<tr>
+          <td>${idx + 1}</td>
+          <td>${row.name}</td>
+          <td>${row.laugh}</td>
+          <td>${row.smile}</td>
+          <td>${row.poop}</td>
+        </tr>`;
+      });
+      html += `</table>`;
+      leaderboardDiv.innerHTML = html;
 
-        socket.on('playerListUpdate', (players) => {
-            updatePlayerList(players);
-        });
+      // Кнопка ручного перехода к следующему раунду (на всякий случай)
+      const isHost = (myId === hostId);
+      nextRoundBtn.classList.toggle('hidden', !(isHost && round < totalRounds));
+      nextRoundBtn.onclick = () => socket.emit('nextRound', myRoom);
+    });
 
-        socket.on('gameStarted', (data) => {
-            alert("Игра началась! Вопрос: " + data.question);
-        });
+    socket.on('gameFinished', ({ leaderboard }) => {
+      document.getElementById('phase').innerText = 'finished';
+      resultsBlock.classList.remove('hidden');
+      let html = `<h3>Игра завершена</h3>
+        <table border="1" cellpadding="6" cellspacing="0">
+        <tr><th>#</th><th>Игрок</th><th>😂</th><th>🙂</th><th>💩</th></tr>`;
+      leaderboard.forEach((row, idx) => {
+        html += `<tr>
+          <td>${idx + 1}</td>
+          <td>${row.name}</td>
+          <td>${row.laugh}</td>
+          <td>${row.smile}</td>
+          <td>${row.poop}</td>
+        </tr>`;
+      });
+      html += `</table>`;
+      leaderboardDiv.innerHTML = html;
+      voteBlock.classList.add('hidden');
+      questionBlock.classList.add('hidden');
+    });
 
-        function updatePlayerList(players) {
-            const list = document.getElementById('playerList');
-            list.innerHTML = '';
-            players.forEach(p => {
-                const li = document.createElement('li');
-                li.textContent = p.name;
-                list.appendChild(li);
-            });
-        }
-    </script>
+    // ====== HELPERS ======
+    function renderPlayers(players) {
+      playersUl.innerHTML = '';
+      players.forEach(p => {
+        const li = document.createElement('li');
+        li.textContent = p.name + (p.id === hostId ? ' (host)' : '');
+        playersUl.appendChild(li);
+      });
+    }
+  </script>
 </body>
 </html>
