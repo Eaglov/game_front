@@ -1,35 +1,85 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta charset="UTF-8">
-  <title>Party Game</title>
-  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+    <meta charset="UTF-8">
+    <title>Party Game</title>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; }
+        #game, #startBtn { display: none; }
+    </style>
 </head>
 <body>
-  <h1>Party Game</h1>
-  <input id="name" placeholder="Your name">
-  <input id="room" placeholder="Room ID">
-  <button id="joinBtn">Join Room</button>
-  <ul id="players"></ul>
+    <h1>Party Game</h1>
+    <div id="joinForm">
+        <input type="text" id="name" placeholder="Ваше имя">
+        <input type="text" id="room" placeholder="Номер комнаты">
+        <button id="joinBtn">Join Room</button>
+    </div>
 
-  <script>
-    const socket = io("https://party-game-backend-0grh.onrender.com");
+    <div id="game">
+        <h2>Комната: <span id="roomNumber"></span></h2>
+        <h3>Игроки:</h3>
+        <ul id="playerList"></ul>
+        <button id="startBtn">Start Game</button>
+    </div>
 
-    document.getElementById('joinBtn').onclick = () => {
-      const name = document.getElementById('name').value;
-      const room = document.getElementById('room').value;
-      socket.emit('joinRoom', { roomId: room, playerName: name });
-    };
+    <script>
+        const socket = io("https://party-game-backend-0grh.onrender.com");
 
-    socket.on('updatePlayers', (players) => {
-      const list = document.getElementById('players');
-      list.innerHTML = '';
-      players.forEach(p => {
-        const li = document.createElement('li');
-        li.textContent = p.name;
-        list.appendChild(li);
-      });
-    });
-  </script>
+        let joined = false;
+        let myRoom = null;
+        let myName = null;
+
+        document.getElementById('joinBtn').onclick = () => {
+            if (joined) return;
+
+            myName = document.getElementById('name').value.trim();
+            myRoom = document.getElementById('room').value.trim();
+
+            if (!myName || !myRoom) {
+                alert("Введите имя и номер комнаты");
+                return;
+            }
+
+            joined = true;
+            socket.emit('joinRoom', { roomId: myRoom, playerName: myName });
+        };
+
+        document.getElementById('startBtn').onclick = () => {
+            if (!myRoom) return;
+            socket.emit('startGame', myRoom);
+        };
+
+        socket.on('roomJoined', (players) => {
+            document.getElementById('joinForm').style.display = 'none';
+            document.getElementById('game').style.display = 'block';
+            document.getElementById('roomNumber').innerText = myRoom;
+            updatePlayerList(players);
+
+            // Только первый игрок в списке — "хост", ему показываем кнопку
+            if (players[0].name === myName) {
+                document.getElementById('startBtn').style.display = 'inline-block';
+            }
+        });
+
+        socket.on('playerListUpdate', (players) => {
+            updatePlayerList(players);
+        });
+
+        socket.on('gameStarted', (data) => {
+            alert("Игра началась! Вопрос: " + data.question);
+        });
+
+        function updatePlayerList(players) {
+            const list = document.getElementById('playerList');
+            list.innerHTML = '';
+            players.forEach(p => {
+                const li = document.createElement('li');
+                li.textContent = p.name;
+                list.appendChild(li);
+            });
+        }
+    </script>
 </body>
 </html>
